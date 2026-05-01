@@ -1,6 +1,6 @@
 [project]
 name = "exp-tracker"
-version = "0.1.0"
+version = "0.2.0"
 description = "Lightweight ML experiment tracker for competitions"
 requires-python = ">=3.10"
 dependencies = ["click>=8.0", "rich>=13.0"]

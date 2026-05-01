@@ -2,6 +2,7 @@
 
 import json
 import sys
+from pathlib import Path
 
 import click
 from rich.console import Console
@@ -13,12 +14,24 @@ from . import report, tracker
 
 console = Console()
 
+_json_output = False
+_quiet_mode = False
+
+
+def _out(msg=""):
+    if not _quiet_mode:
+        console.print(msg)
+
+
+def _json_out(data):
+    if _json_output:
+        print(json.dumps(data, indent=2, default=str))
+        return True
+    return False
+
 
 def _find_project():
-    """Resolve project dir or exit with error."""
-    from pathlib import Path
     from . import db
-
     found = db.find_project_dir()
     if not found:
         console.print("[red]Error:[/red] Not in an exp-tracker project. Run [bold]exp-tracker init[/bold] first.")
@@ -27,26 +40,30 @@ def _find_project():
 
 
 @click.group()
-@click.version_option(version="0.1.0", prog_name="exp-tracker")
-def main():
+@click.version_option(version="0.2.0", prog_name="exp-tracker")
+@click.option("--json", "json_flag", is_flag=True, help="Output as JSON")
+@click.option("--quiet", "-q", is_flag=True, help="Suppress non-essential output")
+def main(json_flag, quiet):
     """🧪 Exp Tracker — Lightweight ML experiment tracking for competitions."""
-    pass
+    global _json_output, _quiet_mode
+    _json_output = json_flag
+    _quiet_mode = quiet
 
 
 @main.command()
 def init():
     """Initialize exp-tracker in the current directory."""
-    from pathlib import Path
-
     project_dir = Path.cwd()
     db_path = tracker.init(project_dir)
-
-    console.print(Panel(
-        f"[green]✓[/green] Initialized exp-tracker in [cyan]{project_dir}/.exp-tracker/[/cyan]\n"
-        f"Database: [dim]{db_path}[/dim]",
-        title="🧪 Exp Tracker",
-        border_style="green",
-    ))
+    if _json_output:
+        _json_out({"status": "initialized", "path": str(db_path)})
+    else:
+        console.print(Panel(
+            f"[green]✓[/green] Initialized exp-tracker in [cyan]{project_dir}/.exp-tracker/[/cyan]\n"
+            f"Database: [dim]{db_path}[/dim]",
+            title="🧪 Exp Tracker",
+            border_style="green",
+        ))
 
 
 @main.command("log")
@@ -59,46 +76,39 @@ def init():
 def log_experiment(name, params, cv_score, notes, tags, parent):
     """Log a new experiment."""
     project_dir = _find_project()
-
     tags_list = [t.strip() for t in tags.split(",")] if tags else None
 
     result = tracker.log_experiment(
-        name=name,
-        params=params,
-        cv_score=cv_score,
-        notes=notes,
-        tags=tags_list,
-        parent_id=parent,
-        project_dir=project_dir,
+        name=name, params=params, cv_score=cv_score, notes=notes,
+        tags=tags_list, parent_id=parent, project_dir=project_dir,
     )
 
-    _print_experiment_card(result, "Experiment Logged")
+    if _json_output:
+        _json_out(result)
+    else:
+        _print_experiment_card(result, "Experiment Logged")
 
 
 @main.command("submit")
 @click.option("--file", "-f", "filepath", required=True, help="Path to submission file")
-@click.option("--experiment", "-e", default=None, help="Experiment ID to link (creates new if omitted)")
+@click.option("--experiment", "-e", default=None, help="Experiment ID to link")
 @click.option("--note", default="", help="Note about this submission")
 def submit(filepath, experiment, note):
     """Log a submission with auto-versioning."""
     project_dir = _find_project()
+    result = tracker.log_submission(filepath=filepath, experiment_id=experiment, note=note, project_dir=project_dir)
 
-    result = tracker.log_submission(
-        filepath=filepath,
-        experiment_id=experiment,
-        note=note,
-        project_dir=project_dir,
-    )
-
-    console.print(Panel(
-        f"[green]✓[/green] Submission logged\n"
-        f"  Version: [bold]{result['version']}[/bold]\n"
-        f"  File: [cyan]{result['filename']}[/cyan]\n"
-        f"  Checksum: [dim]{result['checksum']}[/dim]\n"
-        f"  Experiment: [dim]{result['experiment_id'][:8]}...[/dim]",
-        title="📤 Submission",
-        border_style="blue",
-    ))
+    if _json_output:
+        _json_out(result)
+    else:
+        console.print(Panel(
+            f"[green]✓[/green] Submission logged\n"
+            f"  Version: [bold]{result['version']}[/bold]\n"
+            f"  File: [cyan]{result['filename']}[/cyan]\n"
+            f"  Checksum: [dim]{result['checksum']}[/dim]\n"
+            f"  Experiment: [dim]{result['experiment_id'][:8]}...[/dim]",
+            title="📤 Submission", border_style="blue",
+        ))
 
 
 @main.command("score")
@@ -112,18 +122,16 @@ def update_score(experiment_id, public, private):
         raise SystemExit(1)
 
     project_dir = _find_project()
-    result = tracker.update_score(
-        experiment_id=experiment_id,
-        public_lb=public,
-        private_lb=private,
-        project_dir=project_dir,
-    )
+    result = tracker.update_score(experiment_id=experiment_id, public_lb=public, private_lb=private, project_dir=project_dir)
 
     if not result:
         console.print(f"[red]Error:[/red] Experiment [dim]{experiment_id}[/dim] not found")
         raise SystemExit(1)
 
-    _print_experiment_card(result, "Scores Updated")
+    if _json_output:
+        _json_out(result)
+    else:
+        _print_experiment_card(result, "Scores Updated")
 
 
 @main.command("list")
@@ -133,40 +141,41 @@ def update_score(experiment_id, public, private):
 def list_experiments(tags, name_contains, top):
     """List experiments."""
     project_dir = _find_project()
-
     tags_list = [t.strip() for t in tags.split(",")] if tags else None
-    experiments = tracker.list_experiments(
-        tags=tags_list,
-        name_contains=name_contains,
-        limit=top,
-        project_dir=project_dir,
-    )
+    experiments = tracker.list_experiments(tags=tags_list, name_contains=name_contains, limit=top, project_dir=project_dir)
 
-    if not experiments:
-        console.print("[dim]No experiments found.[/dim]")
+    if _json_output:
+        _json_out(experiments)
         return
-
+    if not experiments:
+        _out("[dim]No experiments found.[/dim]")
+        return
     _print_experiments_table(experiments)
 
 
 @main.command("compare")
 @click.option("--top", "-n", type=int, default=10, help="Top N experiments")
 @click.option("--metric", "-m", type=click.Choice(["cv_score", "public_lb"]), default="cv_score", help="Metric to rank by")
-def compare_experiments(top, metric):
+@click.option("--markdown", is_flag=True, help="Output as markdown table (vault-friendly)")
+def compare_experiments(top, metric, markdown):
     """Compare and rank experiments by metric."""
     project_dir = _find_project()
-
-    experiments = tracker.compare_experiments(
-        top_n=top,
-        metric=metric,
-        project_dir=project_dir,
-    )
+    experiments = tracker.compare_experiments(top_n=top, metric=metric, project_dir=project_dir)
 
     if not experiments:
-        console.print(f"[dim]No experiments with {metric} recorded.[/dim]")
+        _out(f"[dim]No experiments with {metric} recorded.[/dim]")
         return
 
-    # Get best and worst for color coding
+    if _json_output:
+        _json_out(experiments)
+        return
+
+    if markdown:
+        content = report.generate_comparison_table(experiments, metric)
+        print(content)
+        return
+
+    # Rich table output
     scores = [e[metric] for e in experiments if e.get(metric) is not None]
     best = max(scores) if scores else None
     worst = min(scores) if scores else None
@@ -185,8 +194,6 @@ def compare_experiments(top, metric):
     for rank, exp in enumerate(experiments, 1):
         score = exp.get(metric)
         other_score = exp.get(other_metric)
-
-        # Color code
         score_str = _fmt_score(score)
         if score == best and best != worst:
             score_str = f"[bold green]{score_str}[/bold green]"
@@ -197,24 +204,70 @@ def compare_experiments(top, metric):
         tags_str = " ".join(f"[dim]#[/dim]{t}" for t in tags) if tags else "-"
 
         rank_str = str(rank)
-        if rank == 1:
-            rank_str = "🥇"
-        elif rank == 2:
-            rank_str = "🥈"
-        elif rank == 3:
-            rank_str = "🥉"
+        if rank == 1: rank_str = "🥇"
+        elif rank == 2: rank_str = "🥈"
+        elif rank == 3: rank_str = "🥉"
 
         table.add_row(
-            rank_str,
-            exp["id"][:8],
-            exp.get("name", "-"),
-            score_str,
-            _fmt_score(other_score),
-            tags_str,
+            rank_str, exp["id"][:8], exp.get("name", "-"),
+            score_str, _fmt_score(other_score), tags_str,
             (exp.get("notes", "") or "-")[:30],
         )
 
-    console.print(table)
+    _out(table)
+
+
+@main.command("top")
+@click.option("--metric", "-m", type=click.Choice(["cv_score", "public_lb"]), default="cv_score")
+@click.option("--limit", "-n", type=int, default=5)
+def top_experiment(metric, limit):
+    """Quick: what's my best model?"""
+    project_dir = _find_project()
+    experiments = tracker.compare_experiments(top_n=limit, metric=metric, project_dir=project_dir)
+
+    if not experiments:
+        _out(f"[dim]No experiments with {metric} recorded.[/dim]")
+        return
+
+    if _json_output:
+        _json_out(experiments)
+        return
+
+    best = experiments[0]
+    _out(f"[bold green]🏆 Best by {metric}:[/bold green] {best.get('name', '?')} = {best.get(metric)}")
+    for i, e in enumerate(experiments[:3], 1):
+        _out(f"  {i}. {e.get('name', '?')} ({metric}={e.get(metric, '-')})")
+
+
+@main.command("export")
+@click.option("--format", "fmt", type=click.Choice(["markdown", "json"]), default="markdown")
+@click.option("--output", "-o", default=None, help="Output file path (default: vault experiments.md)")
+def export_cmd(fmt, output):
+    """Export experiments to the vault or a file."""
+    project_dir = _find_project()
+    experiments = tracker.list_experiments(project_dir=project_dir)
+
+    if not experiments:
+        _out("[dim]No experiments to export.[/dim]")
+        return
+
+    if fmt == "markdown":
+        content = report.generate_markdown(experiments)
+    else:
+        content = report.generate_json(experiments)
+
+    if output:
+        out_path = Path(output)
+    else:
+        vault = Path.home() / "Obsidian/RhendyVault"
+        out_path = vault / "03_active" / "experiments-export.md" if fmt == "markdown" else vault / "03_active" / "experiments-export.json"
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(content)
+    if _json_output:
+        _json_out({"exported": len(experiments), "path": str(out_path)})
+    else:
+        _out(f"[green]✓[/green] Exported {len(experiments)} experiments to [cyan]{out_path}[/cyan]")
 
 
 @main.command("history")
@@ -224,17 +277,18 @@ def show_history(experiment_id):
     project_dir = _find_project()
 
     if experiment_id:
-        # Show single experiment detail with lineage
         from . import db as db_mod
-
         exp = db_mod.get_experiment(project_dir, experiment_id)
         if not exp:
             console.print(f"[red]Error:[/red] Experiment [dim]{experiment_id}[/dim] not found")
             raise SystemExit(1)
 
+        if _json_output:
+            _json_out(exp)
+            return
+
         _print_experiment_card(exp, "Experiment Detail")
 
-        # Show submissions
         submissions = db_mod.get_submissions(project_dir, experiment_id)
         if submissions:
             console.print("\n[bold]Submissions:[/bold]")
@@ -245,14 +299,11 @@ def show_history(experiment_id):
             sub_table.add_column("Created")
             for sub in submissions:
                 sub_table.add_row(
-                    str(sub["version"]),
-                    sub["filename"],
-                    sub["checksum"][:12] + "...",
-                    _fmt_datetime(sub.get("created_at", "")),
+                    str(sub["version"]), sub["filename"],
+                    sub["checksum"][:12] + "...", _fmt_datetime(sub.get("created_at", "")),
                 )
             console.print(sub_table)
 
-        # Show lineage
         lineage = db_mod.get_lineage(project_dir, experiment_id)
         if len(lineage) > 1:
             console.print("\n[bold]Lineage:[/bold]")
@@ -261,16 +312,18 @@ def show_history(experiment_id):
                 marker = " [bold green]*[/bold green]" if l_exp["id"] == experiment_id else ""
                 console.print(f"{prefix}[cyan]{l_exp.get('name', '?')}[/cyan] ({l_exp['id'][:8]}){marker}")
     else:
-        # Show all experiments timeline
         experiments = tracker.list_experiments(project_dir=project_dir)
         if not experiments:
-            console.print("[dim]No experiments found.[/dim]")
+            _out("[dim]No experiments found.[/dim]")
+            return
+        if _json_output:
+            _json_out(experiments)
             return
         _print_experiments_table(experiments)
 
 
 @main.command("report")
-@click.option("--format", "fmt", type=click.Choice(["markdown", "json"]), default="markdown", help="Output format")
+@click.option("--format", "fmt", type=click.Choice(["markdown", "json"]), default="markdown")
 @click.option("--output", "-o", default=None, help="Output file (default: stdout)")
 def generate_report(fmt, output):
     """Generate a report of all experiments."""
@@ -283,20 +336,17 @@ def generate_report(fmt, output):
         content = report.generate_json(experiments)
 
     if output:
-        from pathlib import Path
         Path(output).write_text(content)
-        console.print(f"[green]✓[/green] Report written to [cyan]{output}[/cyan]")
+        _out(f"[green]✓[/green] Report written to [cyan]{output}[/cyan]")
     else:
-        console.print(content)
+        print(content)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _print_experiment_card(exp: dict, title: str):
-    """Pretty-print a single experiment."""
     tags = json.loads(exp.get("tags", "[]")) if isinstance(exp.get("tags"), str) else exp.get("tags", [])
     params = json.loads(exp.get("params", "{}")) if isinstance(exp.get("params"), str) else exp.get("params", {})
-
     lines = [
         f"[bold]ID:[/bold] {exp['id']}",
         f"[bold]Name:[/bold] [cyan]{exp.get('name', '-')}[/cyan]",
@@ -305,7 +355,6 @@ def _print_experiment_card(exp: dict, title: str):
         f"[bold]Public LB:[/bold] {_fmt_score(exp.get('public_lb'))}",
         f"[bold]Private LB:[/bold] {_fmt_score(exp.get('private_lb'))}",
     ]
-
     if tags:
         lines.append(f"[bold]Tags:[/bold] {', '.join(f'`{t}`' for t in tags)}")
     if params:
@@ -315,12 +364,10 @@ def _print_experiment_card(exp: dict, title: str):
         lines.append(f"[bold]Notes:[/bold] {exp['notes']}")
     if exp.get("parent_id"):
         lines.append(f"[bold]Parent:[/bold] {exp['parent_id'][:8]}...")
-
     console.print(Panel("\n".join(lines), title=f"🧪 {title}", border_style="blue"))
 
 
 def _print_experiments_table(experiments: list[dict]):
-    """Pretty-print a table of experiments using Rich."""
     table = Table(title="🧪 Experiments", show_lines=True)
     table.add_column("ID", style="dim", width=8)
     table.add_column("Name", style="cyan")
@@ -334,18 +381,12 @@ def _print_experiments_table(experiments: list[dict]):
     for exp in experiments:
         tags = json.loads(exp.get("tags", "[]")) if isinstance(exp.get("tags"), str) else exp.get("tags", [])
         tags_str = " ".join(f"[dim]#[/dim]{t}" for t in tags) if tags else "-"
-
         table.add_row(
-            exp["id"][:8],
-            exp.get("name", "-"),
-            exp.get("type", "experiment"),
-            _fmt_score(exp.get("cv_score")),
-            _fmt_score(exp.get("public_lb")),
-            _fmt_score(exp.get("private_lb")),
-            tags_str,
+            exp["id"][:8], exp.get("name", "-"), exp.get("type", "experiment"),
+            _fmt_score(exp.get("cv_score")), _fmt_score(exp.get("public_lb")),
+            _fmt_score(exp.get("private_lb")), tags_str,
             _fmt_datetime(exp.get("created_at", "")),
         )
-
     console.print(table)
 
 
@@ -367,3 +408,7 @@ def _fmt_datetime(iso_str: str) -> str:
         return dt.strftime("%m-%d %H:%M")
     except (ValueError, TypeError):
         return iso_str[:16]
+
+
+if __name__ == "__main__":
+    main()
