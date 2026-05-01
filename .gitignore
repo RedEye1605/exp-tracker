@@ -3,7 +3,8 @@ __pycache__/
 .venv/
 *.egg-info/
 .env
-*.db
+# Don't ignore .exp-tracker — it stores experiment data
+# *.db
 build/
 dist/
 .ruff_cache/
