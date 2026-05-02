@@ -30,6 +30,28 @@ def _json_out(data):
     return False
 
 
+def _resolve_experiment(project_dir, experiment_id):
+    """Resolve experiment by full or partial ID."""
+    from . import db
+    exp = db.get_experiment(project_dir, experiment_id)
+    if exp:
+        return experiment_id, exp
+    # Try partial match
+    conn = db.get_connection(project_dir)
+    rows = conn.execute(
+        "SELECT id, name FROM experiments WHERE id LIKE ?", (f"{experiment_id}%",)
+    ).fetchall()
+    conn.close()
+    if len(rows) == 1:
+        full_id = rows[0][0]
+        return full_id, db.get_experiment(project_dir, full_id)
+    elif len(rows) > 1:
+        console.print("[yellow]Multiple matches:[/yellow]")
+        for r in rows:
+            console.print(f"  {r[0]}  {r[1]}")
+    return None, None
+
+
 def _find_project():
     from . import db
     found = db.find_project_dir()
@@ -122,7 +144,17 @@ def update_score(experiment_id, public, private):
         raise SystemExit(1)
 
     project_dir = _find_project()
-    result = tracker.update_score(experiment_id=experiment_id, public_lb=public, private_lb=private, project_dir=project_dir)
+    resolved_id, resolved_exp = _resolve_experiment(project_dir, experiment_id)
+    if not resolved_exp:
+        console.print(f"[red]Error:[/red] Experiment [dim]{experiment_id}[/dim] not found")
+        raise SystemExit(1)
+
+    result = tracker.update_score(
+        experiment_id=resolved_id,
+        public_lb=public,
+        private_lb=private,
+        project_dir=project_dir,
+    )
 
     if not result:
         console.print(f"[red]Error:[/red] Experiment [dim]{experiment_id}[/dim] not found")

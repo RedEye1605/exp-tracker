@@ -1,11 +1,15 @@
 __pycache__/
 *.pyc
-.venv/
+*.pyo
 *.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
 .env
 # Don't ignore .exp-tracker — it stores experiment data
 # *.db
-build/
-dist/
 .ruff_cache/
 .pytest_cache/
