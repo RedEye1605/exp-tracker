@@ -1,14 +1,12 @@
 """CLI interface for exp-tracker using Click + Rich."""
 
 import json
-import sys
 from pathlib import Path
 
 import click
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
-from rich.text import Text
 
 from . import report, tracker
 
@@ -236,9 +234,12 @@ def compare_experiments(top, metric, markdown):
         tags_str = " ".join(f"[dim]#[/dim]{t}" for t in tags) if tags else "-"
 
         rank_str = str(rank)
-        if rank == 1: rank_str = "🥇"
-        elif rank == 2: rank_str = "🥈"
-        elif rank == 3: rank_str = "🥉"
+        if rank == 1:
+            rank_str = "🥇"
+        elif rank == 2:
+            rank_str = "🥈"
+        elif rank == 3:
+            rank_str = "🥉"
 
         table.add_row(
             rank_str, exp["id"][:8], exp.get("name", "-"),
